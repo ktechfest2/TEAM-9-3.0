@@ -1,7 +1,8 @@
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, File, Header, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -23,9 +24,32 @@ from app.schemas.results import (
 from app.services.cloudinary_storage import remote_sha256, signed_download_url, upload_evidence
 
 router = APIRouter(prefix="/workspaces/{workspace_id}")
+LIVE_CAPTURE_MAX_AGE = 10 * 60  # seconds between camera shutter and server receipt
+LIVE_CAPTURE_CLOCK_SLACK = 2 * 60  # tolerated phone-clock drift into the future
 all_roles = require_workspace_roles(
     "party_admin", "pu_agent", "ward_agent", "collation_officer", "operations", "legal_compliance"
 )
+
+
+def check_live_capture(
+    source: str | None, captured_at: datetime | None, media_type: str, received_at: datetime
+) -> None:
+    """Agents may only submit a photo taken live in the app's camera, moments ago."""
+    if source != "camera" or captured_at is None:
+        raise AppError(
+            "live_capture_required",
+            "Agents must take the result-sheet photo with the in-app camera",
+            422,
+        )
+    if media_type not in {"image/jpeg", "image/png", "image/webp"}:
+        raise AppError("live_capture_required", "Agents must submit a camera photo", 415)
+    age = (received_at - captured_at.astimezone(UTC)).total_seconds()
+    if age > LIVE_CAPTURE_MAX_AGE or age < -LIVE_CAPTURE_CLOCK_SLACK:
+        raise AppError(
+            "stale_capture",
+            "This photo was not taken just now. Retake it with the camera and submit again.",
+            422,
+        )
 
 
 @router.post("/documents", response_model=DocumentResponse, status_code=201)
@@ -37,8 +61,14 @@ async def upload_document(
     file: Annotated[UploadFile, File()],
     provenance: Literal["party_submitted", "public_irev"] = "party_submitted",
     parent_document_id: uuid.UUID | None = None,
+    capture_source: Annotated[Literal["camera", "file"] | None, Form()] = None,
+    captured_at: Annotated[datetime | None, Form()] = None,
+    latitude: Annotated[float | None, Form(ge=-90, le=90)] = None,
+    longitude: Annotated[float | None, Form(ge=-180, le=180)] = None,
 ) -> Document:
-    del membership
+    received_at = datetime.now(UTC)
+    if membership.role == "pu_agent":
+        check_live_capture(capture_source, captured_at, file.content_type or "", received_at)
     content = await file.read()
     parent = db.get(Document, parent_document_id) if parent_document_id else None
     if parent_document_id and (parent is None or parent.workspace_id != workspace_id):
@@ -62,6 +92,14 @@ async def upload_document(
         provenance=provenance,
         parent_document_id=parent_document_id,
         uploaded_by_id=user.id,
+        capture_metadata={
+            "source": capture_source or "file",
+            "captured_at": captured_at.astimezone(UTC).isoformat() if captured_at else None,
+            "received_at": received_at.isoformat(),
+            "uploader_role": membership.role,
+            "latitude": latitude,
+            "longitude": longitude,
+        },
     )
     db.add(document)
     db.commit()
@@ -156,7 +194,7 @@ def create_submission(
     election = db.get(Election, payload.election_id)
     contest = db.get(Contest, payload.contest_id)
     node = db.get(GeographyNode, payload.geography_node_id)
-    document = db.get(Document, payload.document_id)
+    document = db.get(Document, payload.document_id) if payload.document_id else None
     if not election or election.workspace_id != workspace_id or election.status != "active":
         raise AppError("invalid_election", "An active workspace election is required", 422)
     form_levels = {"EC8A": "polling_unit", "EC8B": "ward", "EC8C": "lga", "EC8D": "state"}
@@ -170,11 +208,21 @@ def create_submission(
         raise AppError(
             "invalid_geography", "Geography does not match the configured form level", 422
         )
-    if not document or document.workspace_id != workspace_id or document.status != "available":
-        raise AppError("invalid_document", "An available workspace document is required", 422)
     workspace = db.get(Workspace, workspace_id)
+    inec_desk = bool(workspace and workspace.kind == "inec" and membership.role == "party_admin")
+    if payload.document_id is None:
+        # INEC types official figures directly; party results must carry their sheet.
+        if not inec_desk:
+            raise AppError("document_required", "Attach the result-sheet photo", 422)
+    elif not document or document.workspace_id != workspace_id or document.status != "available":
+        raise AppError("invalid_document", "An available workspace document is required", 422)
+    if (
+        membership.role == "pu_agent"
+        and (document.capture_metadata or {}).get("source") != "camera"
+    ):
+        raise AppError("live_capture_required", "Agent results must use a live camera photo", 422)
     # The single INEC account reports official results for every polling unit.
-    if not (workspace and workspace.kind == "inec" and membership.role == "party_admin"):
+    if not inec_desk:
         require_geography_scope(db, membership, node)
     candidate_ids = {item.candidate_id for item in payload.figures}
     valid_ids = set(
@@ -214,7 +262,7 @@ def create_submission(
         election_id=election.id,
         contest_id=contest.id,
         geography_node_id=node.id,
-        document_id=document.id,
+        document_id=document.id if document else None,
         form_type=payload.form_type,
         version=(previous.version + 1) if previous else 1,
         supersedes_id=payload.supersedes_id,

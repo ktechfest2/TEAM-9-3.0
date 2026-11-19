@@ -3,9 +3,10 @@
     uv run python -m app.scripts.seed_demo          # API at http://127.0.0.1:8000
 
 Creates one INEC account and three fictional party accounts that share a real Ikeja ward
-(5 polling units). Party agents are invited with their polling unit, upload a result-sheet
-image, and enter figures; INEC uploads its own figures. At PU 003 INEC's entry differs from
-both parties' agents so the cross-check flags it. All figures are synthetic.
+(20 polling units). PA and DU each have 7 agents assigned; PF has none yet. Agents are invited
+with their polling unit, upload a live camera capture of the result sheet, and enter figures;
+INEC types its own figures (no sheet needed). INEC's entries at PU 003 and PU 010 differ from
+the agents' so the cross-check flags them. All figures are synthetic.
 
 Uses BOOTSTRAP_ADMIN_* for the platform admin. Every demo user gets DEMO_USER_PASSWORD, or the
 bootstrap password when that is unset. Requires ENFORCE_MFA=false (local demo only).
@@ -17,6 +18,7 @@ import struct
 import sys
 import uuid
 import zlib
+from datetime import UTC, datetime
 
 import httpx
 
@@ -29,10 +31,25 @@ state,25,Lagos,
 lga,25/11,Ikeja,25
 ward,25/11/01,Anifowoshe/Ikeja,25/11
 polling_unit,25/11/01/001,Anifowoshe Pry. Sch.,25/11/01
-polling_unit,25/11/01/002,Junction of Oduyemi/Independence St.,25/11/01
+polling_unit,25/11/01/002,Junction Of Oduyemi/Independence St.,25/11/01
 polling_unit,25/11/01/003,Along Independence St.,25/11/01
-polling_unit,25/11/01/004,Junction of Akinremi/Araromi St.,25/11/01
-polling_unit,25/11/01/005,Junction of Oduyemi/Araromi St.,25/11/01
+polling_unit,25/11/01/004,Junction Of Akinremi/Araromi St.,25/11/01
+polling_unit,25/11/01/005,Junction Of Oduyemi/Araromi St.,25/11/01
+polling_unit,25/11/01/006,In Front Of No. 3 Balogun St.,25/11/01
+polling_unit,25/11/01/007,In Front Of No. 5 Nurudeen St.,25/11/01
+polling_unit,25/11/01/008,"Open Space At 5, Nurudeen St.",25/11/01
+polling_unit,25/11/01/009,In Front Of No. 50 Abeokuta St. I,25/11/01
+polling_unit,25/11/01/010,In Front Of No. 50 Abeokuta St. Ii,25/11/01
+polling_unit,25/11/01/011,Junction Of Oduyemi/Ojulowo Imose St.,25/11/01
+polling_unit,25/11/01/012,Junction Of Basiru Oweh/Planking Rd.,25/11/01
+polling_unit,25/11/01/013,Ikeja Local Govt. Community Dev. I,25/11/01
+polling_unit,25/11/01/014,Ikeja Local Govt. Community Dev. Ii,25/11/01
+polling_unit,25/11/01/015,In Front Of No. 6 Otigba St.,25/11/01
+polling_unit,25/11/01/016,In Front Of No. 15 Ola Ayeni St.,25/11/01
+polling_unit,25/11/01/017,Open Space At Ola Ayeni Street,25/11/01
+polling_unit,25/11/01/018,In Front Of No. 16 Oshitelu Street,25/11/01
+polling_unit,25/11/01/019,Junction Of Idowu Kodesoh St. I,25/11/01
+polling_unit,25/11/01/020,Junction Of Idowu Kodesoh St. Ii,25/11/01
 """
 
 PARTIES = [  # fictional parties: code, name, candidate
@@ -46,17 +63,22 @@ ELECTION = {
     "election_date": "2027-03-06",
     "jurisdiction": "Lagos State",
 }
-# What actually happened at each unit (synthetic): votes per party + rejected ballots.
+# What actually happened at each unit (synthetic, deterministic): votes per party + rejected.
 TRUE_RESULTS = {
-    "001": ({"PA": 182, "DU": 143, "PF": 61}, 9),
-    "002": ({"PA": 127, "DU": 166, "PF": 48}, 6),
-    "003": ({"PA": 151, "DU": 118, "PF": 74}, 11),
-    "004": ({"PA": 98, "DU": 131, "PF": 57}, 4),
-    "005": ({"PA": 140, "DU": 109, "PF": 66}, 8),
+    f"{i:03d}": (
+        {"PA": 90 + (i * 37) % 110, "DU": 80 + (i * 53) % 120, "PF": 30 + (i * 29) % 60},
+        3 + i % 9,
+    )
+    for i in range(1, 21)
 }
-INEC_ENTRY_ERROR = {"003": {"PF": 150}}  # INEC's PU 003 entry carries +150 for PF
-AGENT_UNITS = {"PA": ["001", "002", "003", "004", "005"], "DU": ["001", "002", "003"], "PF": []}
-INEC_UNITS = ["001", "002", "003", "004"]
+# INEC's typed entries at two units carry errors, so the cross-check flags them.
+INEC_ENTRY_ERROR = {"003": {"PF": 150}, "010": {"DU": 40, "PA": -40}}
+AGENT_UNITS = {
+    "PA": ["001", "002", "003", "004", "005", "006", "007"],
+    "DU": ["001", "002", "003", "008", "009", "010", "011"],
+    "PF": [],
+}
+INEC_UNITS = [f"{i:03d}" for i in range(1, 21) if i not in (7, 11, 19, 20)]  # 16 typed so far
 
 
 def die(r: httpx.Response) -> None:
@@ -124,20 +146,21 @@ def accept(token: str, name: str, password: str) -> None:
     )
 
 
-def submit(s: Session, ws: str, election: dict, unit: dict, votes: dict, rejected: int) -> None:
+def submit(
+    s: Session, ws: str, election: dict, unit: dict, votes: dict, rejected: int, *, sheet: bool
+) -> None:
+    """Agents attach a live camera capture; INEC types figures without a sheet."""
     contest = election["contests"][0]
     by_code = {c["party_code"]: c["id"] for c in contest["candidates"]}
-    doc = s.http.post(
-        f"/workspaces/{ws}/documents",
-        files={
-            "file": (
-                f"EC8A-{unit['code'].replace('/', '-')}.png",
-                io.BytesIO(sheet_png(len(votes))),
-                "image/png",
-            )
-        },
-    )
-    doc = ok(doc)
+    document_id = None
+    if sheet:
+        name = f"EC8A-{unit['code'].replace('/', '-')}.png"
+        doc = s.post(
+            f"/workspaces/{ws}/documents",
+            data={"capture_source": "camera", "captured_at": datetime.now(UTC).isoformat()},
+            files={"file": (name, io.BytesIO(sheet_png(len(votes))), "image/png")},
+        )
+        document_id = doc["id"]
     valid = sum(votes.values())
     s.post(
         f"/workspaces/{ws}/submissions",
@@ -146,7 +169,7 @@ def submit(s: Session, ws: str, election: dict, unit: dict, votes: dict, rejecte
             "election_id": election["id"],
             "contest_id": contest["id"],
             "geography_node_id": unit["id"],
-            "document_id": doc["id"],
+            "document_id": document_id,
             "form_type": "EC8A",
             "figures": [{"candidate_id": by_code[c], "votes": v} for c, v in votes.items()],
             "valid_votes": valid,
@@ -242,7 +265,7 @@ def main() -> None:
             accept(invite["invitation_token"], f"{code} Agent PU {suffix}", password)
             agent = Session(email, password)
             votes, rejected = TRUE_RESULTS[suffix]
-            submit(agent, ws, election, nodes[suffix], dict(votes), rejected)
+            submit(agent, ws, election, nodes[suffix], dict(votes), rejected, sheet=True)
         print(f"agents    {code}: {len(units)} invited with polling units and reported")
 
     ws, inec, election = ballots["INEC"]
@@ -253,8 +276,10 @@ def main() -> None:
     for suffix in INEC_UNITS:
         votes, rejected = TRUE_RESULTS[suffix]
         votes = {k: v + INEC_ENTRY_ERROR.get(suffix, {}).get(k, 0) for k, v in votes.items()}
-        submit(inec, ws, election, nodes[suffix], votes, rejected)
-    print(f"inec      uploaded {len(INEC_UNITS)} polling-unit results (PU 003 differs from agents)")
+        submit(inec, ws, election, nodes[suffix], votes, rejected, sheet=False)
+    print(
+        f"inec      typed {len(INEC_UNITS)} polling-unit results (entry errors at PU 003 and 010)"
+    )
 
     summary = inec.get(f"/workspaces/{ws}/crosscheck", params={"election_id": election["id"]})[
         "summary"

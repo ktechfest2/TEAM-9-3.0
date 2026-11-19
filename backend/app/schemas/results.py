@@ -14,6 +14,7 @@ class DocumentResponse(BaseModel):
     sha256: str
     provenance: str
     status: str
+    capture_metadata: dict | None = None
     parent_document_id: uuid.UUID | None
     created_at: datetime
 
@@ -40,7 +41,8 @@ class SubmissionCreate(BaseModel):
     election_id: uuid.UUID
     contest_id: uuid.UUID
     geography_node_id: uuid.UUID
-    document_id: uuid.UUID
+    # Required for party accounts; the INEC account may type figures without a sheet.
+    document_id: uuid.UUID | None = None
     form_type: Literal["EC8A", "EC8B", "EC8C", "EC8D"]
     figures: list[FigureInput] = Field(min_length=1)
     valid_votes: int = Field(ge=0)
@@ -73,7 +75,7 @@ class SubmissionResponse(BaseModel):
     election_id: uuid.UUID
     contest_id: uuid.UUID
     geography_node_id: uuid.UUID
-    document_id: uuid.UUID
+    document_id: uuid.UUID | None
     form_type: str
     status: str
     version: int

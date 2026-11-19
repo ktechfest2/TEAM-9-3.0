@@ -29,7 +29,7 @@ ACTIVE = ("submitted", "verified")
 @dataclass
 class Reported:
     submission_id: uuid.UUID
-    document_id: uuid.UUID
+    document_id: uuid.UUID | None
     workspace_id: uuid.UUID
     version: int
     submitted_at: datetime

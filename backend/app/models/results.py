@@ -36,6 +36,8 @@ class Document(Base):
     size_bytes: Mapped[int] = mapped_column(BigInteger)
     sha256: Mapped[str] = mapped_column(String(64), index=True)
     provenance: Mapped[str] = mapped_column(String(30))
+    # How the file was produced, e.g. {"source": "camera", "captured_at": ...} for agent captures.
+    capture_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(30), default="available")
     parent_document_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("documents.id")
@@ -60,7 +62,10 @@ class ResultSubmission(Base):
     geography_node_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("geography_nodes.id"), index=True
     )
-    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("documents.id"))
+    # Party submissions always carry their result-sheet evidence; INEC may type figures directly.
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("documents.id"), nullable=True
+    )
     form_type: Mapped[str] = mapped_column(String(10))
     status: Mapped[str] = mapped_column(String(30), default="submitted", index=True)
     version: Mapped[int] = mapped_column(Integer, default=1)

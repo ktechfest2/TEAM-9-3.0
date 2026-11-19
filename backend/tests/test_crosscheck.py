@@ -104,7 +104,6 @@ def test_local_evidence_links_are_signed_and_expire(tmp_path, monkeypatch) -> No
         local_storage._path("../../etc/passwd")
 
 
-
 def test_custom_validation_errors_return_readable_422() -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -135,3 +134,36 @@ def test_custom_validation_errors_return_readable_422() -> None:
     error = response.json()["error"]
     assert error["message"] == "valid_votes plus rejected_ballots must equal total_votes_cast"
     assert error["details"][0]["ctx"]["error"].startswith("valid_votes")
+
+
+def test_agents_must_submit_fresh_live_camera_photos() -> None:
+    from datetime import timedelta
+
+    from app.api.routes.results import check_live_capture
+
+    now = datetime.now(UTC)
+    check_live_capture("camera", now - timedelta(seconds=30), "image/jpeg", now)
+    for source, taken, media in [
+        ("file", now, "image/jpeg"),  # gallery / file upload
+        (None, now, "image/jpeg"),
+        ("camera", None, "image/jpeg"),
+        ("camera", now - timedelta(minutes=11), "image/jpeg"),  # old photo
+        ("camera", now + timedelta(minutes=5), "image/jpeg"),  # clock forged forward
+        ("camera", now, "application/pdf"),
+    ]:
+        with pytest.raises(AppError):
+            check_live_capture(source, taken, media, now)
+
+
+def test_inec_may_type_figures_without_a_sheet() -> None:
+    body = SubmissionCreate(
+        election_id=uuid.uuid4(),
+        contest_id=uuid.uuid4(),
+        geography_node_id=uuid.uuid4(),
+        form_type="EC8A",
+        figures=[{"candidate_id": uuid.uuid4(), "votes": 5}],
+        valid_votes=5,
+        rejected_ballots=1,
+        total_votes_cast=6,
+    )
+    assert body.document_id is None

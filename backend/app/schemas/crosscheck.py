@@ -11,7 +11,7 @@ Status = Literal["match", "mismatch", "awaiting_inec", "awaiting_party", "not_re
 
 class ReportedFigures(BaseModel):
     submission_id: uuid.UUID
-    document_id: uuid.UUID
+    document_id: uuid.UUID | None
     version: int
     submitted_at: datetime
     totals: dict[str, int]

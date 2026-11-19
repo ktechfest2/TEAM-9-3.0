@@ -33,7 +33,7 @@ def _figures(db: Session, item: cc.Reported | None, with_url: bool) -> ReportedF
     if item is None:
         return None
     url = None
-    if with_url:
+    if with_url and item.document_id is not None:
         document = db.get(Document, item.document_id)
         if document is not None:
             url = signed_download_url(
