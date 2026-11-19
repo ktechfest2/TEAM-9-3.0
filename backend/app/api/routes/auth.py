@@ -39,6 +39,10 @@ from app.schemas.identity import (
 
 router = APIRouter()
 
+# Checked against when the email is unknown, so a failed login takes the same time either way
+# and response timing does not reveal which emails have accounts.
+_UNKNOWN_USER_HASH = hash_password(secrets.token_urlsafe(32))
+
 
 def issue_tokens(db: Session, user: User, request: Request, *, mfa: bool) -> TokenResponse:
     settings = get_settings()
@@ -63,11 +67,10 @@ def login(
     payload: LoginRequest, request: Request, db: Annotated[Session, Depends(get_db)]
 ) -> TokenResponse:
     user = db.scalar(select(User).where(User.email == payload.email))
-    if (
-        user is None
-        or not user.is_active
-        or not verify_password(payload.password, user.password_hash)
-    ):
+    password_ok = verify_password(
+        payload.password, user.password_hash if user else _UNKNOWN_USER_HASH
+    )
+    if user is None or not user.is_active or not password_ok:
         raise AppError("invalid_credentials", "Email or password is incorrect", 401)
     if user.mfa_enabled:
         return TokenResponse(status="mfa_required", challenge_token=create_mfa_challenge(user.id))

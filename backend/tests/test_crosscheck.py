@@ -155,6 +155,32 @@ def test_agents_must_submit_fresh_live_camera_photos() -> None:
             check_live_capture(source, taken, media, now)
 
 
+def test_corrections_only_supersede_the_same_unit_election_and_form() -> None:
+    from types import SimpleNamespace
+
+    from app.api.routes.results import can_supersede
+
+    ws, election, unit, other = uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+
+    def previous(**changes) -> SimpleNamespace:
+        fields = dict(
+            status="submitted",
+            workspace_id=ws,
+            election_id=election,
+            geography_node_id=unit,
+            form_type="EC8A",
+        )
+        return SimpleNamespace(**(fields | changes))
+
+    assert can_supersede(previous(), ws, election, unit, "EC8A")
+    assert not can_supersede(None, ws, election, unit, "EC8A")  # unknown supersedes_id
+    assert not can_supersede(previous(geography_node_id=other), ws, election, unit, "EC8A")
+    assert not can_supersede(previous(election_id=other), ws, election, unit, "EC8A")
+    assert not can_supersede(previous(workspace_id=other), ws, election, unit, "EC8A")
+    assert not can_supersede(previous(form_type="EC8B"), ws, election, unit, "EC8A")
+    assert not can_supersede(previous(status="superseded"), ws, election, unit, "EC8A")
+
+
 def test_inec_may_type_figures_without_a_sheet() -> None:
     body = SubmissionCreate(
         election_id=uuid.uuid4(),

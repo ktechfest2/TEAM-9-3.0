@@ -21,7 +21,12 @@ from app.schemas.results import (
     SubmissionCreate,
     SubmissionResponse,
 )
-from app.services.cloudinary_storage import remote_sha256, signed_download_url, upload_evidence
+from app.services.cloudinary_storage import (
+    EVIDENCE_LINK_SECONDS,
+    remote_sha256,
+    signed_download_url,
+    upload_evidence,
+)
 
 router = APIRouter(prefix="/workspaces/{workspace_id}")
 LIVE_CAPTURE_MAX_AGE = 10 * 60  # seconds between camera shutter and server receipt
@@ -52,6 +57,28 @@ def check_live_capture(
         )
 
 
+def can_supersede(
+    previous: ResultSubmission | None,
+    workspace_id: uuid.UUID,
+    election_id: uuid.UUID,
+    node_id: uuid.UUID,
+    form_type: str,
+) -> bool:
+    """A correction may only replace the current result for the same unit, election and form.
+
+    Without this, a correction filed for one polling unit could mark another unit's result as
+    superseded and silently drop it from the cross-check.
+    """
+    return (
+        previous is not None
+        and previous.status != "superseded"
+        and previous.workspace_id == workspace_id
+        and previous.election_id == election_id
+        and previous.geography_node_id == node_id
+        and previous.form_type == form_type
+    )
+
+
 @router.post("/documents", response_model=DocumentResponse, status_code=201)
 async def upload_document(
     workspace_id: uuid.UUID,
@@ -69,12 +96,14 @@ async def upload_document(
     received_at = datetime.now(UTC)
     if membership.role == "pu_agent":
         check_live_capture(capture_source, captured_at, file.content_type or "", received_at)
-    content = await file.read()
     parent = db.get(Document, parent_document_id) if parent_document_id else None
     if parent_document_id and (parent is None or parent.workspace_id != workspace_id):
         raise AppError(
             "invalid_parent_document", "Parent document was not found in this workspace", 422
         )
+    # Read at most one byte past the limit so an oversized upload is never fully buffered;
+    # upload_evidence rejects anything longer than max_document_bytes.
+    content = await file.read(get_settings().max_document_bytes + 1)
     uploaded = upload_evidence(
         content, file.filename or "evidence", file.content_type or "", workspace_id
     )
@@ -126,7 +155,7 @@ def access_document(
         url=signed_download_url(
             document.cloudinary_public_id, document.resource_type, document.cloudinary_format
         ),
-        expires_in=3600,
+        expires_in=EVIDENCE_LINK_SECONDS,
     )
 
 
@@ -237,7 +266,9 @@ def create_submission(
             "invalid_figures", "Candidate figures must be unique and belong to the contest", 422
         )
     previous = db.get(ResultSubmission, payload.supersedes_id) if payload.supersedes_id else None
-    if previous and (previous.workspace_id != workspace_id or previous.status == "superseded"):
+    if payload.supersedes_id is not None and not can_supersede(
+        previous, workspace_id, election.id, node.id, payload.form_type
+    ):
         raise AppError(
             "invalid_superseded_submission", "Submission cannot supersede that record", 422
         )

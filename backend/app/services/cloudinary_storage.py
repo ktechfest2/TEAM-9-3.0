@@ -10,6 +10,7 @@ import cloudinary.utils
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.services import local_storage
+from app.services.local_storage import EVIDENCE_LINK_SECONDS
 
 ALLOWED_TYPES = {
     "image/jpeg",
@@ -45,7 +46,9 @@ def upload_evidence(
     settings = get_settings()
     if media_type not in ALLOWED_TYPES:
         raise AppError(
-            "unsupported_media_type", "Only PDF, JPEG, PNG, and WebP evidence is accepted", 415
+            "unsupported_media_type",
+            "Only JPEG, PNG, WebP, PDF, CSV, and ZIP evidence is accepted",
+            415,
         )
     if len(content) > settings.max_document_bytes:
         raise AppError("file_too_large", "Evidence file exceeds the configured limit", 413)
@@ -79,7 +82,7 @@ def signed_download_url(public_id: str, resource_type: str, file_format: str) ->
         file_format,
         resource_type=resource_type,
         type="authenticated",
-        expires_at=int(time()) + 3600,
+        expires_at=int(time()) + EVIDENCE_LINK_SECONDS,
     )
 
 
