@@ -20,7 +20,8 @@ class AuditEvent(Base):
     )
     action: Mapped[str] = mapped_column(String(100), index=True)
     entity_type: Mapped[str] = mapped_column(String(80))
-    entity_id: Mapped[str | None] = mapped_column(String(100))
+    # Holds full API paths (audit middleware), which exceed 100 characters on nested routes.
+    entity_id: Mapped[str | None] = mapped_column(String(500))
     effective_role: Mapped[str | None] = mapped_column(String(40))
     request_id: Mapped[str | None] = mapped_column(String(100))
     ip_address: Mapped[str | None] = mapped_column(String(64))

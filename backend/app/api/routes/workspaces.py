@@ -6,13 +6,17 @@ from fastapi import APIRouter, Depends, File, Request, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import CurrentUser, require_workspace_roles
+from app.api.dependencies import CurrentUser, mfa_satisfied, require_workspace_roles
 from app.core.errors import AppError
 from app.core.security import hash_token, random_token
 from app.db.session import get_db
-from app.models.identity import Invitation, RefreshSession
+from app.models.elections import Candidate, Contest, Election, PoliticalParty
+from app.models.identity import Invitation, RefreshSession, User
 from app.models.organisation import GeographyAssignment, GeographyNode, Membership, Workspace
 from app.schemas.organisation import (
+    BallotCandidate,
+    BallotContest,
+    BallotElection,
     CoverageSummary,
     GeographyAssignmentCreate,
     GeographyAssignmentResponse,
@@ -21,6 +25,11 @@ from app.schemas.organisation import (
     InvitationResponse,
     MembershipResponse,
     MembershipUpdate,
+    NodeSummary,
+    PendingInvitationResponse,
+    PeopleResponse,
+    PersonResponse,
+    WorkspaceContext,
     WorkspaceCreate,
     WorkspaceResponse,
 )
@@ -50,8 +59,17 @@ def create_workspace(
     user: CurrentUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Workspace:
-    if not user.is_platform_admin or not getattr(request.state, "mfa", False):
+    if not user.is_platform_admin or not mfa_satisfied(request):
         raise AppError("forbidden", "A platform administrator with MFA is required", 403)
+    if payload.kind == "inec" and db.scalar(select(Workspace.id).where(Workspace.kind == "inec")):
+        raise AppError("inec_account_exists", "The INEC account already exists", 409)
+    if payload.kind == "party" and db.scalar(
+        select(Workspace.id).where(
+            Workspace.kind == "party",
+            func.upper(Workspace.party_code) == payload.party_code.strip().upper(),
+        )
+    ):
+        raise AppError("party_account_exists", "This political party already has an account", 409)
     workspace = Workspace(**payload.model_dump(), created_by_id=user.id)
     db.add(workspace)
     db.flush()
@@ -97,11 +115,18 @@ def invite_member(
     user: CurrentUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> InvitationResponse:
+    if payload.geography_node_id is not None:
+        node = db.get(GeographyNode, payload.geography_node_id)
+        if node is None or node.workspace_id != workspace_id:
+            raise AppError("invalid_polling_unit", "Polling unit is not in this account", 422)
+        if payload.role == "pu_agent" and node.level != "polling_unit":
+            raise AppError("invalid_polling_unit", "Agents must be assigned a polling unit", 422)
     raw = random_token()
     invitation = Invitation(
         workspace_id=workspace_id,
         email=payload.email.strip().lower(),
         role=payload.role,
+        geography_node_id=payload.geography_node_id,
         token_hash=hash_token(raw),
         invited_by_id=user.id,
         expires_at=datetime.now(UTC) + timedelta(days=3),
@@ -113,6 +138,7 @@ def invite_member(
         id=invitation.id,
         email=invitation.email,
         role=invitation.role,
+        geography_node_id=invitation.geography_node_id,
         expires_at=invitation.expires_at,
         invitation_token=raw,
     )
@@ -339,4 +365,154 @@ def coverage(
             .where(Membership.workspace_id == workspace_id)
         )
         or 0,
+    )
+
+
+ALL_ROLES = (
+    "party_admin",
+    "pu_agent",
+    "ward_agent",
+    "collation_officer",
+    "operations",
+    "legal_compliance",
+)
+
+
+def node_summary(node: GeographyNode) -> NodeSummary:
+    path: list[str] = []
+    current = node.parent
+    while current is not None:
+        path.insert(0, current.name)
+        current = current.parent
+    return NodeSummary(id=node.id, level=node.level, code=node.code, name=node.name, path=path)
+
+
+@router.get("/workspaces/{workspace_id}/people", response_model=PeopleResponse)
+def list_people(
+    workspace_id: uuid.UUID,
+    _: Annotated[Membership, Depends(require_workspace_roles("party_admin", "operations"))],
+    db: Annotated[Session, Depends(get_db)],
+) -> PeopleResponse:
+    """Members with their assigned polling units, plus invitations not yet accepted."""
+    rows = db.execute(
+        select(Membership, User)
+        .join(User, User.id == Membership.user_id)
+        .where(Membership.workspace_id == workspace_id)
+        .order_by(Membership.created_at)
+    ).all()
+    assignments = db.execute(
+        select(GeographyAssignment.membership_id, GeographyNode)
+        .join(GeographyNode, GeographyNode.id == GeographyAssignment.geography_node_id)
+        .join(Membership, Membership.id == GeographyAssignment.membership_id)
+        .where(Membership.workspace_id == workspace_id)
+    ).all()
+    by_member: dict[uuid.UUID, list[NodeSummary]] = {}
+    for membership_id, node in assignments:
+        by_member.setdefault(membership_id, []).append(node_summary(node))
+    pending = db.scalars(
+        select(Invitation)
+        .where(
+            Invitation.workspace_id == workspace_id,
+            Invitation.accepted_at.is_(None),
+            Invitation.expires_at > datetime.now(UTC),
+        )
+        .order_by(Invitation.created_at.desc())
+    ).all()
+    return PeopleResponse(
+        members=[
+            PersonResponse(
+                membership_id=m.id,
+                user_id=u.id,
+                full_name=u.full_name,
+                email=u.email,
+                role=m.role,
+                is_active=m.is_active,
+                assignments=by_member.get(m.id, []),
+            )
+            for m, u in rows
+        ],
+        pending=[
+            PendingInvitationResponse(
+                id=i.id,
+                email=i.email,
+                role=i.role,
+                polling_unit=(
+                    node_summary(db.get(GeographyNode, i.geography_node_id))
+                    if i.geography_node_id
+                    else None
+                ),
+                expires_at=i.expires_at,
+            )
+            for i in pending
+        ],
+    )
+
+
+@router.get("/workspaces/{workspace_id}/context", response_model=WorkspaceContext)
+def workspace_context(
+    workspace_id: uuid.UUID,
+    membership: Annotated[Membership, Depends(require_workspace_roles(*ALL_ROLES))],
+    db: Annotated[Session, Depends(get_db)],
+) -> WorkspaceContext:
+    """Everything a signed-in member needs: their role, assigned units, and the ballot."""
+    workspace = db.get(Workspace, workspace_id)
+    nodes = db.scalars(
+        select(GeographyNode)
+        .join(GeographyAssignment, GeographyAssignment.geography_node_id == GeographyNode.id)
+        .where(GeographyAssignment.membership_id == membership.id)
+        .order_by(GeographyNode.code)
+    ).all()
+    elections = db.scalars(
+        select(Election)
+        .where(Election.workspace_id == workspace_id)
+        .order_by(Election.election_date.desc())
+    ).all()
+    ballot: list[BallotElection] = []
+    for election in elections:
+        contests = db.scalars(
+            select(Contest).where(Contest.election_id == election.id).order_by(Contest.name)
+        ).all()
+        items = []
+        for contest in contests:
+            candidates = db.execute(
+                select(Candidate, PoliticalParty)
+                .join(PoliticalParty, PoliticalParty.id == Candidate.party_id)
+                .where(Candidate.contest_id == contest.id)
+                .order_by(Candidate.ballot_code)
+            ).all()
+            items.append(
+                BallotContest(
+                    id=contest.id,
+                    name=contest.name,
+                    office=contest.office,
+                    form_type=contest.form_type,
+                    geography_level=contest.geography_level,
+                    candidates=[
+                        BallotCandidate(
+                            id=c.id,
+                            name=c.name,
+                            ballot_code=c.ballot_code,
+                            party_code=p.code,
+                            party_name=p.name,
+                        )
+                        for c, p in candidates
+                    ],
+                )
+            )
+        ballot.append(
+            BallotElection(
+                id=election.id,
+                name=election.name,
+                election_type=election.election_type,
+                election_date=election.election_date.isoformat(),
+                status=election.status,
+                contests=items,
+            )
+        )
+    return WorkspaceContext(
+        workspace=WorkspaceResponse.model_validate(workspace),
+        role=membership.role,
+        can_submit_anywhere=workspace.kind == "inec" and membership.role == "party_admin",
+        assignments=[node_summary(n) for n in nodes],
+        elections=ballot,
     )

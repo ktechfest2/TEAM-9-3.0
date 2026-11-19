@@ -37,9 +37,21 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, exc: RequestValidationError):
+        # Pydantic puts the raised ValueError object in `ctx`; it is not JSON-serialisable and
+        # used to turn every custom validator failure (e.g. vote-sum checks) into an HTTP 500.
+        details = []
+        for item in exc.errors():
+            clean = {k: v for k, v in item.items() if k not in ("ctx", "url")}
+            if "ctx" in item:
+                clean["ctx"] = {k: str(v) for k, v in item["ctx"].items()}
+            details.append(clean)
+        first = details[0]["msg"].removeprefix("Value error, ") if details else ""
+        message = first if details and details[0].get("type") == "value_error" else ""
         return JSONResponse(
             status_code=422,
-            content=payload(request, "validation_error", "Request validation failed", exc.errors()),
+            content=payload(
+                request, "validation_error", message or "Request validation failed", details
+            ),
         )
 
     @app.exception_handler(StarletteHTTPException)

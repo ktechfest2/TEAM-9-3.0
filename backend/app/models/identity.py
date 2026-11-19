@@ -60,6 +60,10 @@ class Invitation(Base):
     )
     email: Mapped[str] = mapped_column(String(320), index=True)
     role: Mapped[str] = mapped_column(String(40))
+    # Polling unit the invitee is assigned to on acceptance (required for PU agents).
+    geography_node_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("geography_nodes.id", ondelete="SET NULL")
+    )
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
     invited_by_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

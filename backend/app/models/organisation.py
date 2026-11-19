@@ -14,6 +14,10 @@ class Workspace(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(180))
     party_code: Mapped[str] = mapped_column(String(30), index=True)
+    # "party" (one account per political party) or "inec" (the single INEC account).
+    kind: Mapped[str] = mapped_column(
+        String(10), default="party", server_default="party", index=True
+    )
     timezone: Mapped[str] = mapped_column(String(80), default="Africa/Lagos")
     status: Mapped[str] = mapped_column(String(30), default="draft", index=True)
     branding: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)

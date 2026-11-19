@@ -11,7 +11,7 @@ from app.core.errors import AppError
 from app.db.session import get_db
 from app.models.compliance import EvidenceIntegrityCheck
 from app.models.elections import Candidate, Contest, Election
-from app.models.organisation import GeographyNode, Membership
+from app.models.organisation import GeographyNode, Membership, Workspace
 from app.models.results import Document, ResultFigure, ResultSubmission
 from app.schemas.results import (
     DocumentAccessResponse,
@@ -172,7 +172,10 @@ def create_submission(
         )
     if not document or document.workspace_id != workspace_id or document.status != "available":
         raise AppError("invalid_document", "An available workspace document is required", 422)
-    require_geography_scope(db, membership, node)
+    workspace = db.get(Workspace, workspace_id)
+    # The single INEC account reports official results for every polling unit.
+    if not (workspace and workspace.kind == "inec" and membership.role == "party_admin"):
+        require_geography_scope(db, membership, node)
     candidate_ids = {item.candidate_id for item in payload.figures}
     valid_ids = set(
         db.scalars(
@@ -204,6 +207,7 @@ def create_submission(
         "contest": contest.name,
         "form_type": payload.form_type,
         "geography_level": node.level,
+        "correction_reason": payload.correction_reason,
     }
     submission = ResultSubmission(
         workspace_id=workspace_id,

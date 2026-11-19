@@ -33,6 +33,16 @@ class Settings(BaseSettings):
     irev_enabled: bool = False
     irev_provider_base_url: str | None = None
     export_retention_days: int = 30
+    # MFA is always enforced in production; local demos may relax it explicitly.
+    enforce_mfa: bool = True
+    # Development-only evidence store used when Cloudinary credentials are absent.
+    local_evidence_dir: str = "var/evidence"
+
+    @property
+    def cloudinary_configured(self) -> bool:
+        return all(
+            (self.cloudinary_cloud_name, self.cloudinary_api_key, self.cloudinary_api_secret)
+        )
 
     @model_validator(mode="after")
     def validate_production(self):
@@ -41,6 +51,10 @@ class Settings(BaseSettings):
                 raise ValueError("Production AUTH_SECRET_KEY must be high entropy")
             if self.debug:
                 raise ValueError("DEBUG must be false in production")
+            if not self.enforce_mfa:
+                raise ValueError("ENFORCE_MFA cannot be disabled in production")
+            if not self.cloudinary_configured:
+                raise ValueError("Production requires Cloudinary evidence storage")
         return self
 
 

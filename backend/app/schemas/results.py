@@ -49,9 +49,13 @@ class SubmissionCreate(BaseModel):
     accredited_voters: int | None = Field(default=None, ge=0)
     registered_voters: int | None = Field(default=None, ge=0)
     supersedes_id: uuid.UUID | None = None
+    # Why a submission replaces an earlier one (e.g. INEC confirming the correct figure).
+    correction_reason: str | None = Field(default=None, min_length=3, max_length=500)
 
     @model_validator(mode="after")
     def validate_totals(self):
+        if self.supersedes_id and not self.correction_reason:
+            raise ValueError("a correction_reason is required when replacing a submission")
         vote_sum = sum(item.votes for item in self.figures)
         if vote_sum != self.valid_votes:
             raise ValueError("candidate votes must equal valid_votes")
@@ -75,4 +79,6 @@ class SubmissionResponse(BaseModel):
     version: int
     supersedes_id: uuid.UUID | None
     totals: dict
+    configuration_snapshot: dict
+    submitted_by_id: uuid.UUID
     submitted_at: datetime

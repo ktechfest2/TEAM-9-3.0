@@ -26,7 +26,8 @@ def create_app() -> FastAPI:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[str(x) for x in settings.frontend_origins],
+        # Pydantic normalises origins to "http://host:3000/"; browsers send no trailing slash.
+        allow_origins=[str(x).rstrip("/") for x in settings.frontend_origins],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

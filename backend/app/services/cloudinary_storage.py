@@ -9,6 +9,7 @@ import cloudinary.utils
 
 from app.core.config import get_settings
 from app.core.errors import AppError
+from app.services import local_storage
 
 ALLOWED_TYPES = {
     "image/jpeg",
@@ -42,13 +43,15 @@ def upload_evidence(
     content: bytes, filename: str, media_type: str, workspace_id: uuid.UUID
 ) -> dict:
     settings = get_settings()
-    configure_cloudinary()
     if media_type not in ALLOWED_TYPES:
         raise AppError(
             "unsupported_media_type", "Only PDF, JPEG, PNG, and WebP evidence is accepted", 415
         )
     if len(content) > settings.max_document_bytes:
         raise AppError("file_too_large", "Evidence file exceeds the configured limit", 413)
+    if not settings.cloudinary_configured and settings.environment != "production":
+        return local_storage.store(content, media_type, workspace_id)
+    configure_cloudinary()
     digest = hashlib.sha256(content).hexdigest()
     public_id = f"tallytrail/{workspace_id}/{uuid.uuid4()}"
     try:
@@ -68,6 +71,8 @@ def upload_evidence(
 
 
 def signed_download_url(public_id: str, resource_type: str, file_format: str) -> str:
+    if resource_type == "local":
+        return local_storage.signed_url(public_id)
     configure_cloudinary()
     return cloudinary.utils.private_download_url(
         public_id,
@@ -79,6 +84,8 @@ def signed_download_url(public_id: str, resource_type: str, file_format: str) ->
 
 
 def remote_sha256(public_id: str, resource_type: str, file_format: str, max_bytes: int) -> str:
+    if resource_type == "local":
+        return local_storage.sha256_of(public_id)
     url = signed_download_url(public_id, resource_type, file_format)
     digest = hashlib.sha256()
     total = 0

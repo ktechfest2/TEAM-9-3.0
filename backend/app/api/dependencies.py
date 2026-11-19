@@ -7,6 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.errors import AppError
 from app.core.security import decode_access_token
 from app.db.session import get_db
@@ -51,7 +52,7 @@ def require_workspace_roles(*roles: str, require_mfa: bool = False) -> Callable:
         )
         if membership is None or membership.role not in roles:
             raise AppError("forbidden", "You do not have permission in this workspace", 403)
-        if require_mfa and not getattr(request.state, "mfa", False):
+        if require_mfa and get_settings().enforce_mfa and not getattr(request.state, "mfa", False):
             raise AppError("mfa_required", "Multi-factor authentication is required", 403)
         return membership
 
@@ -76,3 +77,8 @@ def require_geography_scope(
     raise AppError(
         "geography_scope_forbidden", "Submission is outside your assigned geography", 403
     )
+
+
+def mfa_satisfied(request: Request) -> bool:
+    """True when the session passed MFA, or MFA enforcement is relaxed (never in production)."""
+    return bool(getattr(request.state, "mfa", False)) or not get_settings().enforce_mfa

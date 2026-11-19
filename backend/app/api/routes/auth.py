@@ -23,7 +23,7 @@ from app.core.security import (
 )
 from app.db.session import get_db
 from app.models.identity import Invitation, MFARecoveryCode, RefreshSession, User
-from app.models.organisation import Membership
+from app.models.organisation import GeographyAssignment, Membership
 from app.schemas.identity import (
     InvitationAccept,
     LoginRequest,
@@ -203,7 +203,20 @@ def accept_invitation(payload: InvitationAccept, db: Annotated[Session, Depends(
     )
     db.add(user)
     db.flush()
-    db.add(Membership(workspace_id=invitation.workspace_id, user_id=user.id, role=invitation.role))
+    membership = Membership(
+        workspace_id=invitation.workspace_id, user_id=user.id, role=invitation.role
+    )
+    db.add(membership)
+    db.flush()
+    if invitation.geography_node_id:
+        # The inviting administrator picked this polling unit when adding the agent.
+        db.add(
+            GeographyAssignment(
+                membership_id=membership.id,
+                geography_node_id=invitation.geography_node_id,
+                assigned_by_id=invitation.invited_by_id,
+            )
+        )
     invitation.accepted_at = datetime.now(UTC)
     db.commit()
     db.refresh(user)
