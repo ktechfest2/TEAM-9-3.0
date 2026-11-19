@@ -1,4 +1,4 @@
-import { Building2, Camera, Home, LogOut, Settings, UserRound, Users } from 'lucide-react'
+import { Building2, Camera, Home, LogOut, PencilLine, Settings, UserRound, Users } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useApp, useWorkspace } from '../state/app'
@@ -13,8 +13,8 @@ interface Item {
 
 export function navFor(base: string, kind: string, role: string, platform: boolean): Item[] {
   const items: Item[] = [{ to: base, label: 'Home', icon: Home, end: true }]
-  if (role === 'pu_agent') items.push({ to: `${base}/submit`, label: 'Upload', icon: Camera })
-  if (kind === 'inec' && role === 'party_admin') items.push({ to: `${base}/submit`, label: 'Upload', icon: Camera })
+  if (role === 'pu_agent') items.push({ to: `${base}/submit`, label: 'Camera', icon: Camera })
+  if (kind === 'inec' && role === 'party_admin') items.push({ to: `${base}/submit`, label: 'Enter result', icon: PencilLine })
   if (kind === 'party' && role === 'party_admin') items.push({ to: `${base}/agents`, label: 'Agents', icon: Users })
   if (role === 'party_admin') items.push({ to: `${base}/setup`, label: 'Setup', icon: Settings })
   if (platform) items.push({ to: '/accounts', label: 'Accounts', icon: Building2 })

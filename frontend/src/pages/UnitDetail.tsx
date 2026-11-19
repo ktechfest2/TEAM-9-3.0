@@ -1,4 +1,4 @@
-import { ArrowLeft, Camera, FileCheck2, Info, PencilLine, Scale } from 'lucide-react'
+import { ArrowLeft, FileCheck2, Info, PencilLine, Scale } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Evidence, FiguresTable, Loading, MultiFiguresTable, StatusChip } from '../components/ui'
@@ -82,7 +82,7 @@ export default function UnitDetail() {
                   </Link>
                 ) : (
                   <Link className="btn sm primary" to={`/w/${wid}/submit/${unit.node.id}`}>
-                    <Camera size={15} /> Upload INEC result
+                    <PencilLine size={15} /> Enter INEC result
                   </Link>
                 ))}
             </div>

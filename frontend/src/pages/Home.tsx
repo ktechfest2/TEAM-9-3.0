@@ -96,12 +96,12 @@ function AgentHome() {
               </div>
             ) : (
               <p className="muted" style={{ margin: 0 }}>
-                When counting ends, take a clear photo of the result sheet (Form EC8A) and enter the figures.
+                When counting ends, photograph the result sheet (Form EC8A) with the in-app camera. The figures fill in from the photo; you check them.
               </p>
             )}
             <div className="grid-2" style={{ gap: 10 }}>
               <Link className="btn primary block" to={`/w/${ctx!.workspace.id}/submit/${u.id}${mine ? `?correct=${mine.submission_id}` : ''}`}>
-                <Camera size={18} /> {mine ? 'Submit a correction' : 'Upload result'}
+                <Camera size={18} /> {mine ? 'Submit a correction' : 'Take photo of result'}
               </Link>
               {row && mine && (
                 <Link className="btn block" to={`/w/${ctx!.workspace.id}/units/${u.id}`}>

@@ -1,10 +1,14 @@
+import basicSsl from '@vitejs/plugin-basic-ssl'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
 // Dev server on :3000 (the backend's default FRONTEND_ORIGINS); /api is proxied to FastAPI so the
-// browser never makes a cross-origin call. --host exposes it on the LAN for testing on a phone.
+// browser never makes a cross-origin call. `npm run dev:phone` serves HTTPS on the LAN, because
+// phone browsers only allow the live camera on secure origins.
+const phone = process.env.PHONE === '1'
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: phone ? [react(), basicSsl()] : [react()],
   server: {
     port: 3000,
     proxy: {

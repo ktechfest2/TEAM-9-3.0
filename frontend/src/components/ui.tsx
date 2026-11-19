@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Clock, Loader2, MinusCircle, X, XCircle } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Clock, Loader2, MinusCircle, PencilLine, X, XCircle } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import logo from '../assets/logo-mark.png'
 import type { ReportedFigures, Status } from '../lib/types'
@@ -181,6 +181,18 @@ export function Evidence({ title, figures }: { title: string; figures: ReportedF
         <div className="empty" style={{ minHeight: 160 }}>
           <MinusCircle size={20} />
           <span className="small">{title}: no result sheet yet</span>
+        </div>
+      </div>
+    )
+  }
+  if (!figures.document_id) {
+    return (
+      <div className="photo">
+        <div className="empty" style={{ minHeight: 160 }}>
+          <PencilLine size={20} />
+          <span className="small">
+            {title}: figures typed directly · v{figures.version} · {timeAgo(figures.submitted_at)}
+          </span>
         </div>
       </div>
     )
