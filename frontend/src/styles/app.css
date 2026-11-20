@@ -706,7 +706,9 @@ h3 {
   overflow: hidden;
   background: #0a0f0c;
   aspect-ratio: 3 / 4;
-  max-height: 68dvh;
+  /* Keep the shutter on screen under the app bar, step header and unit card. */
+  max-height: min(68dvh, calc(100dvh - 330px));
+  min-height: 300px;
   width: 100%;
 }
 .camera-box video {

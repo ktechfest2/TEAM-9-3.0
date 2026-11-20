@@ -252,11 +252,14 @@ export default function Submit() {
             <LiveCamera unitCode={unit.code} unitName={unit.name} onCapture={onCapture} />
           )}
           <ReadingStatus reading={reading} />
-          <div className="sticky-actions">
-            <button className="btn primary" disabled={!capture && !previous} onClick={() => setStep('figures')}>
-              {autoFilled.size ? 'Check the figures' : 'Next: enter figures'} <ArrowRight size={18} />
-            </button>
-          </div>
+          {/* Hidden until there is a photo, so it never covers the camera's shutter button. */}
+          {(capture || previous) && (
+            <div className="sticky-actions">
+              <button className="btn primary" onClick={() => setStep('figures')}>
+                {autoFilled.size ? 'Check the figures' : 'Next: enter figures'} <ArrowRight size={18} />
+              </button>
+            </div>
+          )}
         </section>
       )}
 

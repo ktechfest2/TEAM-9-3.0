@@ -100,6 +100,41 @@ function cleanCrop(src: HTMLCanvasElement, x: number, y: number, w: number, h: n
   }
   eraseRuns(W, (x, y) => y * W + x, H * 0.5) // vertical runs taller than half the crop
   eraseRuns(H, (y, x) => y * W + x, Math.max(H * 1.2, 40)) // horizontal runs much wider than a digit
+  // Drop leftover border fragments: a tilted sheet breaks box edges into short, hair-thin
+  // segments that survive the run filter. Digits are compact blobs; fragments are not.
+  const seen = new Uint8Array(W * H)
+  const stack: number[] = []
+  for (let start = 0; start < W * H; start++) {
+    if (!dark[start] || seen[start]) continue
+    const pixels: number[] = []
+    let x0 = W, y0 = H, x1 = 0, y1 = 0
+    stack.push(start)
+    seen[start] = 1
+    while (stack.length) {
+      const p = stack.pop()!
+      pixels.push(p)
+      const px = p % W
+      const py = (p - px) / W
+      if (px < x0) x0 = px
+      if (px > x1) x1 = px
+      if (py < y0) y0 = py
+      if (py > y1) y1 = py
+      for (const q of [p - 1, p + 1, p - W, p + W, p - W - 1, p - W + 1, p + W - 1, p + W + 1]) {
+        if (q < 0 || q >= W * H || seen[q] || !dark[q]) continue
+        if (Math.abs((q % W) - px) > 1) continue // no wrap across rows
+        seen[q] = 1
+        stack.push(q)
+      }
+    }
+    const w = x1 - x0 + 1
+    const h = y1 - y0 + 1
+    const thin = Math.min(w, h) <= Math.max(3, Math.round(H * 0.05))
+    const sliver = Math.min(w, h) / Math.max(w, h) < 0.14
+    const speck = pixels.length < Math.max(6, H * 0.08)
+    // Frame remnants (L/U-shaped box corners) are large but hollow; digits are dense.
+    const hollow = pixels.length / (w * h) < 0.12 && Math.max(w, h) > H * 0.6
+    if (thin || sliver || speck || hollow) for (const p of pixels) dark[p] = 0
+  }
   // Tight crop around the remaining ink: isolated figures read far better without empty space.
   let minX = c.width, minY = c.height, maxX = -1, maxY = -1
   for (let yy = 0; yy < c.height; yy++)
