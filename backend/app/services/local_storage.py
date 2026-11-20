@@ -16,6 +16,9 @@ from urllib.parse import urlencode
 from app.core.config import get_settings
 from app.core.errors import AppError
 
+# How long a signed evidence link stays valid, shared by the local and Cloudinary stores.
+EVIDENCE_LINK_SECONDS = 3600
+
 EXTENSIONS = {
     "image/jpeg": "jpg",
     "image/png": "png",
@@ -64,7 +67,7 @@ def store(content: bytes, media_type: str, workspace_id: uuid.UUID) -> dict:
     }
 
 
-def signed_url(public_id: str, lifetime: int = 3600) -> str:
+def signed_url(public_id: str, lifetime: int = EVIDENCE_LINK_SECONDS) -> str:
     expires = int(time()) + lifetime
     query = urlencode({"key": public_id, "exp": expires, "sig": _signature(public_id, expires)})
     return f"{get_settings().api_v1_prefix}/evidence/local?{query}"
